@@ -49,7 +49,7 @@ public class Dpt {
     public ConfirmMode getConfirmMode() { return this.confirmMode; }
     public int getStartupTimeout() { return this.startupTimeout; }
 
-    private Path configPath;
+    private final Path configPath;
 
     public PTClient getPanelClient() {
         return panelClient;
@@ -169,7 +169,7 @@ public class Dpt {
 
         // option node options are somewhat non-breaking, if they were not specified we can insert some defaults.
         ConfigurationNode optionsNode = rootNode.node("options");
-        this.confirmMode = confirmMode.fromString(optionsNode.node("confirmationMode").getString("never"));
+        this.confirmMode = ConfirmMode.fromString(optionsNode.node("confirmationMode").getString("never"));
         this.startupTimeout = optionsNode.node("startupTimeout").getInt(5);
 
         return continueSetup;

@@ -3,6 +3,7 @@ package com.github.cinnamondev.dpt;
 import com.github.cinnamondev.dpt.client.PTClient;
 import com.github.cinnamondev.dpt.client.PTServer;
 import com.github.cinnamondev.dpt.client.PowerAction;
+import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.proxy.ConnectionRequestBuilder;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
@@ -10,9 +11,10 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerPing;
 import com.velocitypowered.api.scheduler.ScheduledTask;
 import com.velocitypowered.api.scheduler.Scheduler;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
 
 import java.util.Collection;
-import java.util.Collections;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -20,11 +22,11 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public class VelocityPTServer extends PTServer {
-    private ProxyServer proxy;
-    private RegisteredServer server;
+    private final ProxyServer proxy;
+    private final RegisteredServer server;
 
     private final long inactivityTimeout;
-    private AtomicBoolean inactivityHandlerActive = new AtomicBoolean(false);
+    private final AtomicBoolean inactivityHandlerActive = new AtomicBoolean(false);
     private ScheduledTask inactivityHandler;
 
     public VelocityPTServer(PTClient client, ProxyServer proxy, RegisteredServer server, String ptUUID, long inactivityTimeout) {
@@ -149,6 +151,48 @@ public class VelocityPTServer extends PTServer {
         t.schedule();
     }
 
+    /**
+     * Start the server (after specified `startDelay`), then send specified `players` (or send a confirmation) when
+     * the server has fully started. Does not block.
+     *
+     * @note If a custom implementation is required on ready, use `VelocityPTServer::onReadyOrTimeout`.
+     *
+     * @param caller Caller of command
+     * @param players Players to send to server
+     * @param timeout Maximum time to wait for the server to be in a ready state (milliseconds)
+     * @param interval Interval between pings of the server (milliseconds)
+     * @param startDelay Initial delay (MINUTES)
+     * @param confirm Whether to send players confirmation messages or not.
+     */
+    public void startThenSend(CommandSource caller,
+                              Collection<Player> players,
+                              long timeout,
+                              long interval,
+                              long startDelay,
+                              boolean confirm) {
+
+        if (!online()) { power(PowerAction.START); }
+        onReadyOrTimeout(timeout, interval, startDelay, s -> {
+            s.startInactivityHandler(); // timeout feature.
+            if (confirm) { // send message to player when the server is ready
+                players.forEach(p -> p.sendMessage(
+                        Component.text("The server" + name() + "is now ready to join!")
+                                .append(Component.text("[Click here]")
+                                        // use the default whotsit
+                                        .clickEvent(ClickEvent.runCommand("/server " + name())
+                                        )
+                                )
+                ));
+            } else {
+                s.send(players);
+            }
+        }, () -> { // server did not start or cannot be communicated with via proxy.
+            getLogger().error("Exceeded timeout window while starting server {}.", name());
+            caller.sendMessage(Component.text(
+                    "Could not start server " + name() + "! Contact your administrator"
+            ));
+        });
+    }
 
     /**
      * Send players in collection to the server. Does not care if players are able to access the server.

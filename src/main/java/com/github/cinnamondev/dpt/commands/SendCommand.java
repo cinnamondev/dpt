@@ -2,7 +2,6 @@ package com.github.cinnamondev.dpt.commands;
 
 import com.github.cinnamondev.dpt.Dpt;
 import com.github.cinnamondev.dpt.VelocityPTServer;
-import com.github.cinnamondev.dpt.client.PowerAction;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
@@ -12,7 +11,6 @@ import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.event.ClickEvent;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -128,20 +126,18 @@ public class SendCommand {
                                      String serverArgument,
                                      long delayTime) {
         ProxyServer proxy = dpt.getProxy();
-        String playerArg = StringArgumentType.getString(ctx, "player");
-        String serverArg = StringArgumentType.getString(ctx, "server");
         boolean waitForConfirm = dpt.getConfirmMode().equals(Dpt.ConfirmMode.ALWAYS);
 
-        if (!ctx.getSource().hasPermission("dpt.send." + serverArg) || !ctx.getSource().hasPermission("dpt.send.any")) {
+        if (!ctx.getSource().hasPermission("dpt.send." + serverArgument) || !ctx.getSource().hasPermission("dpt.send.any")) {
             ctx.getSource().sendMessage(Component.text("You do not have sufficient permission to send players here."));
             return 1;
         }
 
         // parse player argument
         Collection<Player> playersToSend = Collections.emptyList();
-        if (playerArg.equals("all")) { // ALL players on proxy
+        if (playerArgument.equals("all")) { // ALL players on proxy
              playersToSend = proxy.getAllPlayers();
-        } else if (playerArg.equals("here")) { // ALL players on the server *the caller is executing from*
+        } else if (playerArgument.equals("here")) { // ALL players on the server *the caller is executing from*
             if (ctx.getSource() instanceof Player p) {
                 playersToSend = p.getCurrentServer()
                         .orElseThrow() // we should not expect this to throw, because the player is on a server.
@@ -151,16 +147,16 @@ public class SendCommand {
                 ctx.getSource().sendMessage(Component.text("`here` can only be used by players"));
             }
         } else {
-            Optional<Player> player = proxy.getPlayer(playerArg);
+            Optional<Player> player = proxy.getPlayer(playerArgument);
             if (player.isPresent()) {
                 playersToSend = Collections.singleton(player.get());
             } else { // of last resort.
-                ctx.getSource().sendMessage(Component.text("`" + playerArg + "` not found"));
+                ctx.getSource().sendMessage(Component.text("`" + playerArgument + "` not found"));
             }
         }
 
 
-        if (ctx.getSource() instanceof Player p && playerArg.equals(p.getUsername())) {
+        if (ctx.getSource() instanceof Player p && playerArgument.equals(p.getUsername())) {
             // player is sending themselves (requires no `other`) permission
             waitForConfirm = dpt.getConfirmMode().equals(Dpt.ConfirmMode.PERSONAL);
             playersToSend = Collections.singleton(p);
@@ -168,7 +164,7 @@ public class SendCommand {
         // But Nobody Came.
         if (playersToSend.isEmpty()) { return 1; }
 
-        Optional<VelocityPTServer> _server = dpt.getServer(serverArg);
+        Optional<VelocityPTServer> _server = dpt.getServer(serverArgument);
         if (_server.isPresent()) {
             VelocityPTServer server = _server.get();
             // based on args
@@ -176,15 +172,13 @@ public class SendCommand {
             String confirmMsg = waitForConfirm ? "You will receive a confirmation when it's ready." : "";
 
             ctx.getSource().sendMessage( // send caller message
-                    Component.text("Sending " + playerArg + " to " + serverArg + delayMsg)
+                    Component.text("Sending " + playerArgument + " to " + serverArgument + delayMsg)
             );
             playersToSend.forEach(p -> p.sendMessage( // send each player message. if immediate, they prob won't see it.
-                    Component.text("You are going to be sent to" + serverArg + ". " + delayMsg + confirmMsg)
+                    Component.text("You are going to be sent to" + serverArgument + ". " + delayMsg + confirmMsg)
             ));
             // this will not block.
-            startThenSend(dpt,
-                    ctx.getSource(),
-                    server,
+            server.startThenSend(ctx.getSource(),
                     playersToSend,
                     READY_TIMEOUT,
                     REPEAT_DELAY,
@@ -192,58 +186,13 @@ public class SendCommand {
                     waitForConfirm
             );
         } else {
-            ctx.getSource().sendMessage(Component.text("Server" + serverArg + " not found"));
+            ctx.getSource().sendMessage(Component.text("Server" + serverArgument + " not found"));
         }
 
         return 1;
     }
 
-    /**
-     * Start the server (after specified `startDelay`), then send specified `players` (or send a confirmation) when
-     * the server has fully started. Does not block.
-     *
-     * @note If a custom implementation is required on ready, use `VelocityPTServer::onReadyOrTimeout`.
-     *
-     * @param dpt Plugin
-     * @param caller Caller of command
-     * @param server Server to send players to
-     * @param players Players to send to server
-     * @param timeout Maximum time to wait for the server to be in a ready state (milliseconds)
-     * @param interval Interval between pings of the server (milliseconds)
-     * @param startDelay Initial delay (MINUTES)
-     * @param confirm Whether to send players confirmation messages or not.
-     */
-    public static void startThenSend(Dpt dpt,
-                                   CommandSource caller,
-                                   VelocityPTServer server,
-                                   Collection<Player> players,
-                                   long timeout,
-                                   long interval,
-                                   long startDelay,
-                                   boolean confirm) {
 
-        if (!server.online()) { server.power(PowerAction.START); }
-        server.onReadyOrTimeout(timeout, interval, startDelay, s -> {
-            s.startInactivityHandler(); // timeout feature.
-            if (confirm) { // send message to player when the server is ready
-                players.forEach(p -> p.sendMessage(
-                        Component.text("The server" + server.name() + "is now ready to join!")
-                                .append(Component.text("[Click here]")
-                                        // use the default whotsit
-                                        .clickEvent(ClickEvent.runCommand("/server " + server.name())
-                                        )
-                                )
-                ));
-            } else {
-                server.send(players);
-            }
-        }, () -> { // server did not start or cannot be communicated with via proxy.
-            dpt.getLogger().error("Exceeded timeout window while starting server {}.", server.name());
-            caller.sendMessage(Component.text(
-                    "Could not start server " + server.name() + "! Contact your administrator"
-            ));
-        });
-    }
 
 
 }
