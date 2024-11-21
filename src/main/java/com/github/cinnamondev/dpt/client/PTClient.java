@@ -86,19 +86,26 @@ public class PTClient {
     }
     public PowerState state(String identifier) {
         Optional<String> resources = resources(identifier);
-        return resources.filter(json -> {return json.contains("\"current_state\"");})
+        PowerState state = resources.filter(json -> {return json.contains("\"current_state\"");})
                 .map(json -> {
-                   Pattern r = Pattern.compile("");
+                   Pattern r = Pattern.compile("\"current_state\": *\"([a-zA-Z]+)\"");
                    Matcher m = r.matcher(json);
-                   return m.find() ? PowerState.fromString(m.group()) : PowerState.OFFLINE;
+                   if (m.find()) {
+                       String stateString = m.group(1);
+                       return PowerState.fromString(stateString);
+                   } else {
+                       logger.error("couldnt get power state for " + identifier);
+                       logger.info(json);
+                   }
+                   return PowerState.OFFLINE;
                 })
                 .orElse(PowerState.OFFLINE);
-    }
-    public boolean online(String identifier) {
-        return state(identifier).equals(PowerState.RUNNING);
+        logger.info("PowerState {} is {}", identifier, state);
+        return state;
     }
     public int power(String identifier, PowerAction power) {
-         Optional<HttpResponse<Void>> response = postDiscarding("/api/client/servers/" + identifier + "/power", power.toString());
+        String payload = "{\"signal\": \"" + power.toString() + "\"}";
+        Optional<HttpResponse<Void>> response = postDiscarding("/api/client/servers/" + identifier + "/power", payload);
 
         return response.map(HttpResponse::statusCode).orElse(0);
     }

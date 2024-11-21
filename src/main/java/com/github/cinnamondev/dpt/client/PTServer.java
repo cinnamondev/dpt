@@ -15,15 +15,15 @@ public class PTServer {
 
     public String getUUID() { return this.uuid; }
     public PowerState getPowerState() {
-        return client.state(uuid);
+        return client.state(identifier);
     }
 
     public boolean online() {
-        return getPowerState().equals(PowerState.RUNNING);
+        return getPowerState() == PowerState.RUNNING;
     };
 
     public boolean power(PowerAction powerAction) {
-        return power(powerAction);
+        return client.power(identifier, powerAction) == 204;
     }
 
 }

@@ -1,26 +1,37 @@
 package com.github.cinnamondev.dpt;
 
 import com.github.cinnamondev.dpt.client.PTClient;
+import com.github.cinnamondev.dpt.client.PowerAction;
+import com.github.cinnamondev.dpt.client.PowerState;
 import com.github.cinnamondev.dpt.commands.HelloWorld;
+import com.github.cinnamondev.dpt.commands.SendCommand;
 import com.github.cinnamondev.dpt.util.ConfirmMode;
 import com.google.inject.Inject;
 import com.velocitypowered.api.command.CommandManager;
 import com.velocitypowered.api.command.CommandMeta;
+import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
+import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
+import com.velocitypowered.api.scheduler.Scheduler;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.event.ClickEvent;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.ConfigurateException;
 import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
 
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 
 @Plugin(id = "dpt", name = "dpt", version = "1.0-SNAPSHOT")
@@ -52,7 +63,9 @@ public class Dpt {
     }
 
     private final Logger logger;
+    public Logger getLogger() { return this.logger;}
     private final ProxyServer proxy;
+    public ProxyServer getProxy() { return this.proxy; }
 
     @Inject
     public Dpt(Logger logger, ProxyServer proxy, @DataDirectory Path dataDirectory) {
@@ -73,9 +86,6 @@ public class Dpt {
         boolean continueSetup = configuration();
         loader.save(rootNode);
         //if (!continueSetup) { return; }
-
-        // create client
-        this.panelClient = new PTClient(panelApiKey, panelUrl, logger);
 
         registerCommands();
     }
@@ -99,7 +109,8 @@ public class Dpt {
             clientNode.node("apiKey").getString("apiKeyHere");
             clientNode.node("domain").getString("https://panel.example.com");
         }
-
+        // create client
+        this.panelClient = new PTClient(panelApiKey, panelUrl, logger);
         ConfigurationNode serverListNode = rootNode.node("servers");
 
         Map<Object, ? extends ConfigurationNode> map = serverListNode.childrenMap(); // explore "key: Node" pairs for
@@ -143,14 +154,84 @@ public class Dpt {
 
 
     public void registerCommands() {
-        CommandManager comamndManager = proxy.getCommandManager();
+        CommandManager commandManager = proxy.getCommandManager();
 
-        CommandMeta commandMeta = comamndManager.metaBuilder("dpthello")
+        CommandMeta metaHello = commandManager.metaBuilder("dpthello")
                 .aliases("helloworld")
                 .plugin(this)
                 .build();
 
-        comamndManager.register(commandMeta, HelloWorld.createBrigadierCommand(this));
+        commandManager.register(metaHello, HelloWorld.createBrigadierCommand(this));
 
+        CommandMeta metaSend = commandManager.metaBuilder("dptsend")
+                .aliases("dsend")
+                .plugin(this)
+                .build();
+
+        commandManager.register(metaSend, SendCommand.sendCommand(this));
+
+    }
+
+    public Scheduler.TaskBuilder sendPlayerTask(CommandSource caller,
+                                                        VelocityPTServer server,
+                                                        String serverName,
+                                                        Collection<Player> players,
+                                                        boolean confirm,
+                                                        long timeTimeout,
+                                                        long retryDelay) {
+        AtomicInteger counter = new AtomicInteger(0);
+        Scheduler.TaskBuilder sendPlayerTask = proxy.getScheduler()
+                .buildTask(this, task -> {
+                    if (server.ready()) {
+                        // send each user a message to confirm sending.
+                        if (confirm) {
+                            players.forEach(player -> player.sendMessage(
+                                    Component.text("The server" + serverName + "is now ready to join!")
+                                            .append(Component.text("[Click here]")
+                                                    .clickEvent(ClickEvent.runCommand("/server " + serverName)
+                                                    )
+                                            )
+                                    )
+                            );
+                        } else {
+                            server.send(players);
+                        }
+                        task.cancel();
+                    } else {
+                        logger.info("Server {} is not ready yet. Waiting...", serverName);
+                        int time = counter.addAndGet((int) retryDelay);
+                        if (time > timeTimeout) {
+                            logger.warn("Was not able to start server {} within time allocated.", serverName);
+                            caller.sendMessage(Component.text("Tried to start server" + serverName + ", but it took too long! (see server console)"));
+                            task.cancel();
+                        }
+                    }
+                });
+
+        if (retryDelay > 0) {
+            sendPlayerTask = sendPlayerTask.repeat(retryDelay, TimeUnit.MILLISECONDS);
+        }
+        return sendPlayerTask;
+    }
+
+    /**
+     * Send player task with default timeout and delay.
+     *
+     * Timeout = 300 s (5 minutes)
+     * Repeat delay = 5 seconds
+     *
+     * @param caller
+     * @param server
+     * @param serverName
+     * @param players
+     * @param confirm
+     * @return
+     */
+    public Scheduler.TaskBuilder sendPlayerTask(CommandSource caller,
+                                                        VelocityPTServer server,
+                                                        String serverName,
+                                                        Collection<Player> players,
+                                                        boolean confirm) {
+        return sendPlayerTask(caller, server, serverName, players, confirm, 300000, 5000);
     }
 }

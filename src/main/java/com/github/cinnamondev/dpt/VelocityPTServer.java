@@ -9,6 +9,7 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -27,19 +28,26 @@ public class VelocityPTServer extends PTServer {
 
     public boolean pingable() {
         AtomicBoolean pingable = new AtomicBoolean(false);
-        server.ping().exceptionally(e -> {
-            pingable.set(false);
-            return null;
-        }).thenAccept(ping -> {
-           if (ping != null) {
-               pingable.set(true);
-           }
-        });
+        CompletableFuture<Void> future = server.ping()
+                .exceptionally(e -> {
+                    getLogger().error("ping no work :(");
+                    pingable.set(false);
+                    return null;
+                }).thenAccept(ping -> {
+                    if (ping != null) {
+                        getLogger().info("pinged!");
+                        pingable.set(true);
+                    }
+                });
+        future.join(); // gotta wait!!
         return pingable.get();
     }
 
     public boolean ready() {
-        return (online() && pingable());
+        boolean online = online();
+        boolean pingable = pingable();
+        getLogger().info("is ready {} {}", online, pingable);
+        return (online && pingable);
     }
 
     public void onReady(long interval, long timeout, Consumer<VelocityPTServer> callback) {
