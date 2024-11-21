@@ -1,0 +1,1 @@
+NOTE: This is not a complete implementation of the Pterodactyl API. By a long shot. I just implemented what I needed, this is a TODO.

@@ -1,40 +1,31 @@
 package com.github.cinnamondev.dpt;
 
 import com.github.cinnamondev.dpt.client.PTClient;
-import com.github.cinnamondev.dpt.client.PowerAction;
-import com.github.cinnamondev.dpt.client.PowerState;
-import com.github.cinnamondev.dpt.commands.HelloWorld;
 import com.github.cinnamondev.dpt.commands.SendCommand;
-import com.github.cinnamondev.dpt.util.ConfirmMode;
 import com.google.inject.Inject;
 import com.velocitypowered.api.command.CommandManager;
 import com.velocitypowered.api.command.CommandMeta;
-import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
-import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
-import com.velocitypowered.api.scheduler.Scheduler;
-import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.event.ClickEvent;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.ConfigurateException;
 import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
 
 import java.nio.file.Path;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 
-@Plugin(id = "dpt", name = "dpt", version = "1.0-SNAPSHOT")
+@Plugin(id = "dpt",
+        name = "dpt",
+        description = "dynamically start servers via pterodactyl api",
+        version = "1.1-SNAPSHOT")
 public class Dpt {
     private YamlConfigurationLoader loader;
     private ConfigurationNode rootNode;
@@ -54,7 +45,9 @@ public class Dpt {
     private String panelUrl;
 
     private ConfirmMode confirmMode;
+    private int startupTimeout;
     public ConfirmMode getConfirmMode() { return this.confirmMode; }
+    public int getStartupTimeout() { return this.startupTimeout; }
 
     private Path configPath;
 
@@ -85,9 +78,26 @@ public class Dpt {
 
         boolean continueSetup = configuration();
         loader.save(rootNode);
-        //if (!continueSetup) { return; }
+        if (!continueSetup) {
+            logger.error("Plugin bring up will not continue, due to irrecoverable errors.");
+            return;
+        }
 
-        registerCommands();
+        CommandManager commandManager = proxy.getCommandManager();
+
+        CommandMeta metaSend = commandManager.metaBuilder("dptsend")
+                .aliases("dsend")
+                .plugin(this)
+                .build();
+
+        commandManager.register(metaSend, SendCommand.sendCommand(this));
+
+        CommandMeta metaServer = commandManager.metaBuilder("dptserver")
+                .aliases("dserver", "ds")
+                .plugin(this)
+                .build();
+
+        commandManager.register(metaServer, SendCommand.serverCommand(this));
     }
 
     /**
@@ -106,6 +116,8 @@ public class Dpt {
         panelApiKey = clientNode.node("apiKey").getString();
         panelUrl = clientNode.node("domain").getString();
         if (panelApiKey == null || panelUrl == null) { // server cannot run without these key items.
+            logger.error("No panel configuration could be found -- please fix this before next startup.");
+            continueSetup = false;
             clientNode.node("apiKey").getString("apiKeyHere");
             clientNode.node("domain").getString("https://panel.example.com");
         }
@@ -116,18 +128,25 @@ public class Dpt {
         Map<Object, ? extends ConfigurationNode> map = serverListNode.childrenMap(); // explore "key: Node" pairs for
         // each server.
         if (map.isEmpty()) {
-            logger.error("inserting default value for servers, please change.");
+            logger.error("No servers could be found in the configuration - defaults have been inserted for you.");
             serverListNode.node("survival-example")
                     .node("uuid")
                     .getString("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx");
+            serverListNode.node("survival-example")
+                    .node("timeout")
+                    .getLong(10);
             serverListNode.node("creative-example")
                     .node("uuid")
                     .getString("fullpterodactyluuidhere");
+            serverListNode.node("creative-example")
+                    .node("timeout")
+                    .getLong(0);
             continueSetup = false;
         } else {
             map.forEach((keyObj, value) -> {
                 String registeredName = keyObj.toString();
                 String uuid = value.node("uuid").getString();
+                long timeout = value.node("timeout").getLong(0);
 
                 // search for server in proxy list.
                 Optional<RegisteredServer> server = proxy.getAllServers().stream()
@@ -135,103 +154,52 @@ public class Dpt {
                         .findFirst();
                 if (server.isPresent()) {
                     logger.info("found match for " + registeredName);
-                    VelocityPTServer ptServer = new VelocityPTServer(panelClient, proxy, server.get(), uuid);
+                    VelocityPTServer ptServer = new VelocityPTServer(panelClient, proxy, server.get(), uuid, timeout);
                     servers.put(registeredName, ptServer);
                 } else {
                     logger.warn("Could not find registered server for {}, skipping.", registeredName);
                 }
 
             });
-            if (servers.isEmpty()) { continueSetup = false; }
+            if (servers.isEmpty()) {
+                logger.error("No servers could be found? Names must match the velocity configuration!");
+                continueSetup = false;
+            }
         }
 
+        // option node options are somewhat non-breaking, if they were not specified we can insert some defaults.
         ConfigurationNode optionsNode = rootNode.node("options");
         this.confirmMode = confirmMode.fromString(optionsNode.node("confirmationMode").getString("never"));
-
+        this.startupTimeout = optionsNode.node("startupTimeout").getInt(5);
 
         return continueSetup;
     }
 
+    public enum ConfirmMode {
+        NEVER("never"),  // never send confirm
+        MASS("mass"), // send user confirm to SENDER if they use /dptsend all/here <server>
+        PERSONAL("personal"), // send user confirm if they use /dptsend <server>
+        ALWAYS("always") // always send user confirm to individuals
+        ;
 
-    public void registerCommands() {
-        CommandManager commandManager = proxy.getCommandManager();
-
-        CommandMeta metaHello = commandManager.metaBuilder("dpthello")
-                .aliases("helloworld")
-                .plugin(this)
-                .build();
-
-        commandManager.register(metaHello, HelloWorld.createBrigadierCommand(this));
-
-        CommandMeta metaSend = commandManager.metaBuilder("dptsend")
-                .aliases("dsend")
-                .plugin(this)
-                .build();
-
-        commandManager.register(metaSend, SendCommand.sendCommand(this));
-
-    }
-
-    public Scheduler.TaskBuilder sendPlayerTask(CommandSource caller,
-                                                        VelocityPTServer server,
-                                                        String serverName,
-                                                        Collection<Player> players,
-                                                        boolean confirm,
-                                                        long timeTimeout,
-                                                        long retryDelay) {
-        AtomicInteger counter = new AtomicInteger(0);
-        Scheduler.TaskBuilder sendPlayerTask = proxy.getScheduler()
-                .buildTask(this, task -> {
-                    if (server.ready()) {
-                        // send each user a message to confirm sending.
-                        if (confirm) {
-                            players.forEach(player -> player.sendMessage(
-                                    Component.text("The server" + serverName + "is now ready to join!")
-                                            .append(Component.text("[Click here]")
-                                                    .clickEvent(ClickEvent.runCommand("/server " + serverName)
-                                                    )
-                                            )
-                                    )
-                            );
-                        } else {
-                            server.send(players);
-                        }
-                        task.cancel();
-                    } else {
-                        logger.info("Server {} is not ready yet. Waiting...", serverName);
-                        int time = counter.addAndGet((int) retryDelay);
-                        if (time > timeTimeout) {
-                            logger.warn("Was not able to start server {} within time allocated.", serverName);
-                            caller.sendMessage(Component.text("Tried to start server" + serverName + ", but it took too long! (see server console)"));
-                            task.cancel();
-                        }
-                    }
-                });
-
-        if (retryDelay > 0) {
-            sendPlayerTask = sendPlayerTask.repeat(retryDelay, TimeUnit.MILLISECONDS);
+        private final String modeString;
+        private ConfirmMode(String modeString) {
+            this.modeString = modeString;
         }
-        return sendPlayerTask;
-    }
 
-    /**
-     * Send player task with default timeout and delay.
-     *
-     * Timeout = 300 s (5 minutes)
-     * Repeat delay = 5 seconds
-     *
-     * @param caller
-     * @param server
-     * @param serverName
-     * @param players
-     * @param confirm
-     * @return
-     */
-    public Scheduler.TaskBuilder sendPlayerTask(CommandSource caller,
-                                                        VelocityPTServer server,
-                                                        String serverName,
-                                                        Collection<Player> players,
-                                                        boolean confirm) {
-        return sendPlayerTask(caller, server, serverName, players, confirm, 300000, 5000);
+        @Override
+        public String toString() {
+            return modeString;
+        }
+
+        public static ConfirmMode fromString(String mode) {
+            return switch (mode.toLowerCase()) {
+                case "never"    -> NEVER;
+                case "mass"     -> MASS;
+                case "personal" -> PERSONAL;
+                case "always"   -> ALWAYS;
+                default        -> NEVER;
+            };
+        }
     }
 }
