@@ -34,7 +34,6 @@ public class VelocityPTServer extends PTServer {
         this.proxy = proxy;
         this.server = server;
         this.inactivityTimeout = inactivityTimeout;
-        startInactivityHandler();
     }
 
     /**
@@ -173,7 +172,7 @@ public class VelocityPTServer extends PTServer {
 
         if (!online()) { power(PowerAction.START); }
         onReadyOrTimeout(timeout, interval, startDelay, s -> {
-            s.startInactivityHandler(); // timeout feature.
+            //s.startInactivityHandler(); // timeout feature.
             if (confirm) { // send message to player when the server is ready
                 players.forEach(p -> p.sendMessage(
                         Component.text("The server" + name() + "is now ready to join!")

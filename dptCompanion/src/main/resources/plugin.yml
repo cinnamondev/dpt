@@ -1,0 +1,10 @@
+name: dptCompanion
+version: '1.0-SNAPSHOT'
+main: com.github.cinnamondev.dptCompanion.DptCompanion
+api-version: '1.21'
+
+commands:
+  dptwd:
+    description: enable/disable stopping of the server when it is found to be inactive.
+    usage: /<command> <start/stop>
+    permission: dpt.watchdog

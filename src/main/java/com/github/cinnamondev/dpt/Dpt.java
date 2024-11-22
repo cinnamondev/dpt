@@ -1,21 +1,28 @@
 package com.github.cinnamondev.dpt;
 
 import com.github.cinnamondev.dpt.client.PTClient;
+import com.github.cinnamondev.dpt.client.PowerAction;
 import com.github.cinnamondev.dpt.commands.SendCommand;
+import com.google.common.io.ByteArrayDataInput;
+import com.google.common.io.ByteStreams;
 import com.google.inject.Inject;
 import com.velocitypowered.api.command.CommandManager;
 import com.velocitypowered.api.command.CommandMeta;
+import com.velocitypowered.api.event.connection.PluginMessageEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
+import com.velocitypowered.api.proxy.ServerConnection;
+import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.ConfigurateException;
 import org.spongepowered.configurate.ConfigurationNode;
 import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
 
+import java.io.ByteArrayInputStream;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
@@ -29,15 +36,16 @@ import java.util.function.BiConsumer;
 public class Dpt {
     private YamlConfigurationLoader loader;
     private ConfigurationNode rootNode;
-
     private HashMap<String, VelocityPTServer> servers;
+
     public Optional<VelocityPTServer> getServer(String registeredName) {
         return Optional.ofNullable(servers.get(registeredName));
     }
-
     public void forEachServer(BiConsumer<String, VelocityPTServer> consumer) {
         servers.forEach(consumer);
     }
+
+    private static final MinecraftChannelIdentifier IDENTIFIER = MinecraftChannelIdentifier.from("dpt:watchdog");
 
 
     private PTClient panelClient;
@@ -98,6 +106,7 @@ public class Dpt {
                 .build();
 
         commandManager.register(metaServer, SendCommand.serverCommand(this));
+        proxy.getChannelRegistrar().register(IDENTIFIER);
     }
 
     /**
@@ -173,6 +182,18 @@ public class Dpt {
         this.startupTimeout = optionsNode.node("startupTimeout").getInt(5);
 
         return continueSetup;
+    }
+
+    @Subscribe
+    public void pluginMessageReceive(PluginMessageEvent event) {
+        if (!IDENTIFIER.equals(event.getIdentifier())) { return; }
+        event.setResult(PluginMessageEvent.ForwardResult.handled());
+
+        if (event.getSource() instanceof ServerConnection backend) {
+            ByteArrayDataInput in = ByteStreams.newDataInput(event.getData());
+            String inputToken = in.readUTF();
+            logger.info("Recieved plugin message: {}", inputToken);
+        }
     }
 
     public enum ConfirmMode {
