@@ -6,15 +6,17 @@ import com.github.cinnamondev.dpt.client.PowerAction;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.proxy.ConnectionRequestBuilder;
 import com.velocitypowered.api.proxy.Player;
-import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerPing;
-import com.velocitypowered.api.scheduler.ScheduledTask;
 import com.velocitypowered.api.scheduler.Scheduler;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.event.ClickEvent;
+import net.kyori.adventure.text.event.HoverEvent;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -22,18 +24,18 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 public class VelocityPTServer extends PTServer {
-    private final ProxyServer proxy;
+    private final Dpt dpt;
     private final RegisteredServer server;
 
-    private final long inactivityTimeout;
-    private final AtomicBoolean inactivityHandlerActive = new AtomicBoolean(false);
-    private ScheduledTask inactivityHandler;
+    private final int maxInactivityTime;
+    private boolean ignoreInactivity = false;
+    private int minutesIdle;
 
-    public VelocityPTServer(PTClient client, ProxyServer proxy, RegisteredServer server, String ptUUID, long inactivityTimeout) {
+    public VelocityPTServer(PTClient client, Dpt dpt, RegisteredServer server, String ptUUID, int maxInactivity) {
         super(client, ptUUID);
-        this.proxy = proxy;
         this.server = server;
-        this.inactivityTimeout = inactivityTimeout;
+        this.maxInactivityTime = maxInactivity;
+        this.dpt = dpt;
     }
 
     /**
@@ -48,6 +50,10 @@ public class VelocityPTServer extends PTServer {
      */
     public CompletableFuture<ServerPing> ping() {
         return server.ping();
+    }
+
+    public void setIgnoreInactivity(boolean ignoreInactivity) {
+        this.ignoreInactivity = ignoreInactivity;
     }
 
     /**
@@ -81,38 +87,28 @@ public class VelocityPTServer extends PTServer {
     }
 
     /**
-     * Inactivity handler. Starts on initialization, stops if the server is empty (and stops the server), or if the
-     * server is offline. Implementations of commands that start servers should call this if they want to make use.
-     *
-     * @note If the server is started via other means, this plugin will not check and the server will remain online
-     * until intervened.
+     * To be called externally, increments interval variable, then stops the server once exceeded.
+     * @param interval
+     * @return
      */
-    public void startInactivityHandler() {
-        if (inactivityTimeout <= 0) { return; }
-        inactivityHandlerActive.set(true);
-        this.inactivityHandler = proxy.getScheduler()
-                .buildTask(this, task -> {
-                    // stop if server is offline or the inactivity handler handle got changed.
-                    if (!pingable() || inactivityHandlerActive.get()) {
-                        inactivityHandlerActive.set(false);
-                        task.cancel();
-                        return;
-                    }
-                    if (server.getPlayersConnected().isEmpty()) {
-                        Scheduler scheduler = proxy.getScheduler();
-                        getLogger().info("Stopping server {} as it has been inactive for too long.", name());
-                        power(PowerAction.STOP);
-                        inactivityHandlerActive.set(false);
-                        task.cancel();
-                    }
-                }).repeat(inactivityTimeout, TimeUnit.MINUTES)
-                .delay(inactivityTimeout,TimeUnit.MINUTES)
-                .schedule();
+    public boolean inactivityHandler(int interval) {
+        if (maxInactivityTime <= 0) { ignoreInactivity = true; return false;}
+        if (!server.getPlayersConnected().isEmpty() || ignoreInactivity) {
+            minutesIdle = 0;
+            return false;
+        }
+
+        if ((minutesIdle += interval) > maxInactivityTime) {
+            getLogger().warn("Server {} is shutting down due to inactivity!", name());
+            minutesIdle = 0;
+            power(PowerAction.STOP);
+            return true;
+        }
+        return false;
     }
 
-    public void stopInactivityHandler() {
-        inactivityHandler.cancel();
-        inactivityHandlerActive.set(false);
+    public void feed() {
+        minutesIdle = 0;
     }
     /**
      * (non-blocking) asynchronously wait for the server to be ready, then execute `onPing` (or `onTimeout` if it fails)
@@ -121,14 +117,26 @@ public class VelocityPTServer extends PTServer {
      *
      * @param interval How often to check if the server is ready (ms)
      * @param timeout How long to wait before failing (ms)
-     * @param startDelay How long to wait before starting to check (minutes) (used for
+     * @param startDelay How long to wait before starting to check (minutes)
      * @param onPing function to run when a ping succeeds
      * @param onTimeout function to run when pinging has failed (timed out or some exception (not captured)
      */
     public void onReadyOrTimeout(long timeout, long interval, long startDelay, Consumer<VelocityPTServer> onPing, Runnable onTimeout) {
+        AtomicBoolean isFirst = new AtomicBoolean(true);
         AtomicLong timeElapsed = new AtomicLong(0);
-        Scheduler.TaskBuilder t = proxy.getScheduler()
-                .buildTask(this, task -> {
+        Scheduler.TaskBuilder t = dpt.getProxy().getScheduler()
+                .buildTask(dpt, task -> {
+                    if (isFirst.get()) {
+                        isFirst.set(false);
+                        if (!online()) {
+                            if (!power(PowerAction.START)) { // we should tell a user when this fails :(
+                                onTimeout.run();
+                                task.cancel();
+                                return;
+                            }
+                        }
+                    }
+
                     ping().thenAccept(p -> {
                         getLogger().info("Pong! {}", server.getServerInfo().getName());
                         onPing.accept(this);
@@ -145,7 +153,7 @@ public class VelocityPTServer extends PTServer {
                 .repeat(interval, TimeUnit.MILLISECONDS);
 
         if (startDelay > 0) {
-            t = t.delay(startDelay, TimeUnit.MILLISECONDS);
+            t = t.delay(startDelay, TimeUnit.MINUTES);
         }
         t.schedule();
     }
@@ -170,17 +178,21 @@ public class VelocityPTServer extends PTServer {
                               long startDelay,
                               boolean confirm) {
 
-        if (!online()) { power(PowerAction.START); }
         onReadyOrTimeout(timeout, interval, startDelay, s -> {
-            //s.startInactivityHandler(); // timeout feature.
             if (confirm) { // send message to player when the server is ready
                 players.forEach(p -> p.sendMessage(
-                        Component.text("The server" + name() + "is now ready to join!")
-                                .append(Component.text("[Click here]")
-                                        // use the default whotsit
-                                        .clickEvent(ClickEvent.runCommand("/server " + name())
-                                        )
+                        Component.text("The server \"")
+                                .append(Component.text(name()))
+                                .append(Component.text("\" is now ready to join! "))
+                                .append(
+                                        Component.text("[Click here]", NamedTextColor.DARK_PURPLE)
+                                                .decorate(TextDecoration.BOLD)
+                                                .hoverEvent(HoverEvent.showText(
+                                                        Component.text("Click here to join server!")
+                                                        )
+                                                )
                                 )
+                                .clickEvent(ClickEvent.runCommand("/server " + name()))
                 ));
             } else {
                 s.send(players);
@@ -198,9 +210,12 @@ public class VelocityPTServer extends PTServer {
      * @param players Players to send
      */
     public void send(Collection<Player> players) {
-        players.forEach(p -> {
-            ConnectionRequestBuilder request = p.createConnectionRequest(server);
-            request.connectWithIndication();
-        });
+        Iterator<Player> playerIterator = players.iterator();
+        dpt.getProxy().getScheduler().buildTask(dpt, task -> {
+            if (!playerIterator.hasNext()) { task.cancel(); return; }
+            ConnectionRequestBuilder request = playerIterator.next().createConnectionRequest(server);
+            request.fireAndForget();
+        }).repeat(50L, TimeUnit.MILLISECONDS).schedule(); // connections need to be staggered to stop us
+                                                            // overwhelming the proxy.
     }
 }

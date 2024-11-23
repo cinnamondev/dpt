@@ -32,7 +32,7 @@ import java.util.function.BiConsumer;
 @Plugin(id = "dpt",
         name = "dpt",
         description = "dynamically start servers via pterodactyl api",
-        version = "1.1-SNAPSHOT")
+        version = "1.2b")
 public class Dpt {
     private YamlConfigurationLoader loader;
     private ConfigurationNode rootNode;
@@ -107,6 +107,7 @@ public class Dpt {
 
         commandManager.register(metaServer, SendCommand.serverCommand(this));
         proxy.getChannelRegistrar().register(IDENTIFIER);
+        new InactivityWatchdog(this).start();
     }
 
     /**
@@ -143,19 +144,19 @@ public class Dpt {
                     .getString("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx");
             serverListNode.node("survival-example")
                     .node("timeout")
-                    .getLong(10);
+                    .getInt(10);
             serverListNode.node("creative-example")
                     .node("uuid")
                     .getString("fullpterodactyluuidhere");
             serverListNode.node("creative-example")
                     .node("timeout")
-                    .getLong(0);
+                    .getInt(0);
             continueSetup = false;
         } else {
             map.forEach((keyObj, value) -> {
                 String registeredName = keyObj.toString();
                 String uuid = value.node("uuid").getString();
-                long timeout = value.node("timeout").getLong(0);
+                int timeout = value.node("timeout").getInt(0);
 
                 // search for server in proxy list.
                 Optional<RegisteredServer> server = proxy.getAllServers().stream()
@@ -163,7 +164,7 @@ public class Dpt {
                         .findFirst();
                 if (server.isPresent()) {
                     logger.info("found match for " + registeredName);
-                    VelocityPTServer ptServer = new VelocityPTServer(panelClient, proxy, server.get(), uuid, timeout);
+                    VelocityPTServer ptServer = new VelocityPTServer(panelClient, this, server.get(), uuid, timeout);
                     servers.put(registeredName, ptServer);
                 } else {
                     logger.warn("Could not find registered server for {}, skipping.", registeredName);
@@ -191,8 +192,13 @@ public class Dpt {
 
         if (event.getSource() instanceof ServerConnection backend) {
             ByteArrayDataInput in = ByteStreams.newDataInput(event.getData());
-            String inputToken = in.readUTF();
-            logger.info("Recieved plugin message: {}", inputToken);
+            boolean code = in.readBoolean();
+            getServer(backend.getServer().getServerInfo().getName()).ifPresentOrElse(server -> {
+                logger.info("got server");
+                if (code) { server.feed(); } else { logger.info("n"); }
+            }, () -> {
+                logger.warn("Received signal from a server on the proxy, but it cannot be correlated to a server in the config?");
+            });
         }
     }
 

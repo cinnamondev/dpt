@@ -11,6 +11,10 @@ import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.TextComponent;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.Style;
+import net.kyori.adventure.text.format.TextDecoration;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -33,6 +37,7 @@ public class SendCommand {
      */
     public static BrigadierCommand sendCommand(Dpt dpt) {
         LiteralCommandNode<CommandSource> node = BrigadierCommand.literalArgumentBuilder("dptsend")
+                .requires(src -> src.hasPermission("dpt.send"))
                 .requires(src -> src.hasPermission("dpt.send.others"))
                 .executes(ctx -> {
                     ctx.getSource().sendMessage(Component.text("/dptsend <username/all/here> <server>"));
@@ -64,11 +69,11 @@ public class SendCommand {
                                         StringArgumentType.getString(ctx, "player"),
                                         StringArgumentType.getString(ctx, "server"),
                                         0)
-                                ).then(BrigadierCommand.requiredArgumentBuilder("delayMS", IntegerArgumentType.integer())
+                                ).then(BrigadierCommand.requiredArgumentBuilder("delayMinutes", IntegerArgumentType.integer())
                                         .executes(ctx -> commandParser(dpt, ctx,
                                                 StringArgumentType.getString(ctx, "player"),
                                                 StringArgumentType.getString(ctx, "server"),
-                                                IntegerArgumentType.getInteger(ctx, "time")))
+                                                IntegerArgumentType.getInteger(ctx, "delayMinutes")))
                                 )
                         )
                 )
@@ -128,8 +133,13 @@ public class SendCommand {
         ProxyServer proxy = dpt.getProxy();
         boolean waitForConfirm = dpt.getConfirmMode().equals(Dpt.ConfirmMode.ALWAYS);
 
-        if (!ctx.getSource().hasPermission("dpt.send." + serverArgument) || !ctx.getSource().hasPermission("dpt.send.any")) {
-            ctx.getSource().sendMessage(Component.text("You do not have sufficient permission to send players here."));
+        if (!(ctx.getSource().hasPermission("dpt.send." + serverArgument) || ctx.getSource().hasPermission("dpt.send.any"))) {
+            ctx.getSource().sendMessage(
+                    Component.text(
+                            "You do not have sufficient permission to send players here.",
+                            NamedTextColor.RED
+                    )
+            );
             return 1;
         }
 
@@ -155,9 +165,10 @@ public class SendCommand {
             }
         }
 
-
+        boolean isSelf = false;
         if (ctx.getSource() instanceof Player p && playerArgument.equals(p.getUsername())) {
             // player is sending themselves (requires no `other`) permission
+            isSelf = true;
             waitForConfirm = dpt.getConfirmMode().equals(Dpt.ConfirmMode.PERSONAL);
             playersToSend = Collections.singleton(p);
         }
@@ -168,15 +179,28 @@ public class SendCommand {
         if (_server.isPresent()) {
             VelocityPTServer server = _server.get();
             // based on args
-            String delayMsg = delayTime > 0 ? "in " + delayTime + " minutes." : "";
-            String confirmMsg = waitForConfirm ? "You will receive a confirmation when it's ready." : "";
-
-            ctx.getSource().sendMessage( // send caller message
-                    Component.text("Sending " + playerArgument + " to " + serverArgument + delayMsg)
-            );
+            TextComponent delayMsg;
+            if (delayTime > 0) {
+                delayMsg = Component.text(" in ")
+                        .append(Component.text(delayTime, NamedTextColor.BLUE).decorate(TextDecoration.BOLD))
+                        .append(Component.text(" minutes."));
+            } else {
+                delayMsg = Component.text("");
+            }
+            String confirmMsg = waitForConfirm ? " (You will receive confirmation when it's ready)" : "";
+            if (!isSelf) {
+                ctx.getSource().sendMessage( // send caller message
+                        Component.text("Sending " + playerArgument + " to " + serverArgument + delayMsg)
+                );
+            }
             playersToSend.forEach(p -> p.sendMessage( // send each player message. if immediate, they prob won't see it.
-                    Component.text("You are going to be sent to" + serverArgument + ". " + delayMsg + confirmMsg)
-            ));
+                    Component.text("You're being sent to: ")
+                            .append(Component.text(serverArgument, NamedTextColor.DARK_PURPLE)
+                                    .decorate(TextDecoration.BOLD))
+                            .append(delayMsg)
+                            .append(Component.text(confirmMsg))
+                    )
+            );
             // this will not block.
             server.startThenSend(ctx.getSource(),
                     playersToSend,
@@ -186,7 +210,12 @@ public class SendCommand {
                     waitForConfirm
             );
         } else {
-            ctx.getSource().sendMessage(Component.text("Server" + serverArgument + " not found"));
+            ctx.getSource().sendMessage(
+                    Component.text(
+                            "Server" + serverArgument + " not found",
+                            NamedTextColor.RED
+                    )
+            );
         }
 
         return 1;

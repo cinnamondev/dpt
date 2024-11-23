@@ -23,7 +23,9 @@ public class PTServer {
     };
 
     public boolean power(PowerAction powerAction) {
-        return client.power(identifier, powerAction) == 204;
+        boolean success = client.power(identifier, powerAction) == 204;
+        if (!success) { getLogger().warn("unable to update power state of {}, must be some issue!!", identifier); }
+        return success;
     }
 
 }
