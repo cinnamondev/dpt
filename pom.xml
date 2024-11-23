@@ -6,7 +6,7 @@
 
     <groupId>com.github.cinnamondev</groupId>
     <artifactId>dpt</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <version>1.2b</version>
     <packaging>jar</packaging>
 
     <name>dpt</name>
