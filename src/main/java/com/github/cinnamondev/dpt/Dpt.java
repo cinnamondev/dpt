@@ -20,13 +20,19 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.ConfigurateException;
 import org.spongepowered.configurate.ConfigurationNode;
+import org.spongepowered.configurate.ConfigurationOptions;
 import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
 
-import java.io.ByteArrayInputStream;
+import java.io.*;
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.ResourceBundle;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.BiConsumer;
 
 @Plugin(id = "dpt",
@@ -34,62 +40,72 @@ import java.util.function.BiConsumer;
         description = "dynamically start servers via pterodactyl api",
         version = "1.2b")
 public class Dpt {
-    private YamlConfigurationLoader loader;
     private ConfigurationNode rootNode;
-    private HashMap<String, VelocityPTServer> servers;
-
-    public Optional<VelocityPTServer> getServer(String registeredName) {
-        return Optional.ofNullable(servers.get(registeredName));
-    }
-    public void forEachServer(BiConsumer<String, VelocityPTServer> consumer) {
-        servers.forEach(consumer);
-    }
 
     private static final MinecraftChannelIdentifier IDENTIFIER = MinecraftChannelIdentifier.from("dpt:watchdog");
 
+    private final Path dataDirectory;
 
     private PTClient panelClient;
-    private String panelApiKey;
-    private String panelUrl;
-
-    private ConfirmMode confirmMode;
-    private int startupTimeout;
-    public ConfirmMode getConfirmMode() { return this.confirmMode; }
-    public int getStartupTimeout() { return this.startupTimeout; }
-
-    private final Path configPath;
-
     public PTClient getPanelClient() {
         return panelClient;
     }
 
     private final Logger logger;
     public Logger getLogger() { return this.logger;}
+
     private final ProxyServer proxy;
     public ProxyServer getProxy() { return this.proxy; }
+
+    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+    public ScheduledExecutorService getExecutor() { return this.executor; }
+
+    private int startupTimeout = 120;
+    public int startupTimeout() { return startupTimeout; }
+    private int defaultWatchdogTimeout = 120;
+    public int defaultWatchdogTimeout() { return defaultWatchdogTimeout; }
+
+    private final HashMap<String, Server> servers = new HashMap<>();
+    public Optional<Server> getServer(String registeredName) {
+        return Optional.ofNullable(servers.get(registeredName));
+    }
+
 
     @Inject
     public Dpt(Logger logger, ProxyServer proxy, @DataDirectory Path dataDirectory) {
         this.logger = logger;
         this.proxy = proxy;
-        this.configPath = dataDirectory.resolve("config.yaml");
+        this.dataDirectory = dataDirectory;
     }
+
     @Subscribe
     public void onProxyInitialization(ProxyInitializeEvent event) throws ConfigurateException {
-        this.servers = new HashMap<>();
+        File configFile = dataDirectory.resolve("config.yaml").toFile();
+        if (!configFile.exists()) {
+            configFile.getParentFile().mkdirs();
+            try (InputStream in = this.getClass().getClassLoader().getResourceAsStream("config.yaml")) {
+                configFile.createNewFile();
+                if (in != null) {
+                    try (FileOutputStream out = new FileOutputStream(configFile)) { out.write(in.readAllBytes()); }
+                }
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
 
         // CONFIGURATION BRINGUP
-        loader = YamlConfigurationLoader.builder()
-                .path(configPath)
+        YamlConfigurationLoader loader = YamlConfigurationLoader.builder()
+                .path(dataDirectory.resolve("config.yaml"))
                 .build();
         rootNode = loader.load();
 
-        boolean continueSetup = configuration();
-        loader.save(rootNode);
-        if (!continueSetup) {
-            logger.error("Plugin bring up will not continue, due to irrecoverable errors.");
-            return;
-        }
+        String apiString = rootNode.node("apiKey").getString(null);
+        String urlString = rootNode.node("panelUrl").getString(null);
+        if (apiString == null || urlString == null) { throw new RuntimeException("apiKey and url are missing"); }
+        panelClient = new PTClient(URI.create(urlString), apiString);
+
+        defaultWatchdogTimeout = rootNode.node("defaultTimeout").getInt(120);
+        startupTimeout = rootNode.node("startupTimeout").getInt(120);
 
         CommandManager commandManager = proxy.getCommandManager();
 
@@ -97,136 +113,25 @@ public class Dpt {
                 .aliases("dsend")
                 .plugin(this)
                 .build();
-
         commandManager.register(metaSend, SendCommand.sendCommand(this));
 
         CommandMeta metaServer = commandManager.metaBuilder("dptserver")
                 .aliases("dserver", "ds")
                 .plugin(this)
                 .build();
-
         commandManager.register(metaServer, SendCommand.serverCommand(this));
+        
         proxy.getChannelRegistrar().register(IDENTIFIER);
-        new InactivityWatchdog(this).start();
     }
 
-    /**
-     * Brings up configuration file information `panelApiKey`, `panelUrl`, `confirmMode` and searches the config server
-     * list to provide a list of servers both in the list and registered on the proxy. invalid servers will be ignored.
-     *
-     * If no servers are provided initially, the config will be considered invalid and an example will be provided in
-     * the configuration file.
-     *
-     * @return `true` if configuration state is valid.
-     */
-    private boolean configuration() {
-        boolean continueSetup = true;
-
-        ConfigurationNode clientNode = rootNode.node("pterodactyl");
-        panelApiKey = clientNode.node("apiKey").getString();
-        panelUrl = clientNode.node("domain").getString();
-        if (panelApiKey == null || panelUrl == null) { // server cannot run without these key items.
-            logger.error("No panel configuration could be found -- please fix this before next startup.");
-            continueSetup = false;
-            clientNode.node("apiKey").getString("apiKeyHere");
-            clientNode.node("domain").getString("https://panel.example.com");
-        }
-        // create client
-        this.panelClient = new PTClient(panelApiKey, panelUrl, logger);
-        ConfigurationNode serverListNode = rootNode.node("servers");
-
-        Map<Object, ? extends ConfigurationNode> map = serverListNode.childrenMap(); // explore "key: Node" pairs for
-        // each server.
-        if (map.isEmpty()) {
-            logger.error("No servers could be found in the configuration - defaults have been inserted for you.");
-            serverListNode.node("survival-example")
-                    .node("uuid")
-                    .getString("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx");
-            serverListNode.node("survival-example")
-                    .node("timeout")
-                    .getInt(10);
-            serverListNode.node("creative-example")
-                    .node("uuid")
-                    .getString("fullpterodactyluuidhere");
-            serverListNode.node("creative-example")
-                    .node("timeout")
-                    .getInt(0);
-            continueSetup = false;
-        } else {
-            map.forEach((keyObj, value) -> {
-                String registeredName = keyObj.toString();
-                String uuid = value.node("uuid").getString();
-                int timeout = value.node("timeout").getInt(0);
-
-                // search for server in proxy list.
-                Optional<RegisteredServer> server = proxy.getAllServers().stream()
-                        .filter(s -> s.getServerInfo().getName().equals(registeredName))
-                        .findFirst();
-                if (server.isPresent()) {
-                    logger.info("found match for " + registeredName);
-                    VelocityPTServer ptServer = new VelocityPTServer(panelClient, this, server.get(), uuid, timeout);
-                    servers.put(registeredName, ptServer);
-                } else {
-                    logger.warn("Could not find registered server for {}, skipping.", registeredName);
-                }
-
-            });
-            if (servers.isEmpty()) {
-                logger.error("No servers could be found? Names must match the velocity configuration!");
-                continueSetup = false;
-            }
-        }
-
-        // option node options are somewhat non-breaking, if they were not specified we can insert some defaults.
-        ConfigurationNode optionsNode = rootNode.node("options");
-        this.confirmMode = ConfirmMode.fromString(optionsNode.node("confirmationMode").getString("never"));
-        this.startupTimeout = optionsNode.node("startupTimeout").getInt(5);
-
-        return continueSetup;
-    }
-
-    @Subscribe
-    public void pluginMessageReceive(PluginMessageEvent event) {
-        if (!IDENTIFIER.equals(event.getIdentifier())) { return; }
-        event.setResult(PluginMessageEvent.ForwardResult.handled());
-
-        if (event.getSource() instanceof ServerConnection backend) {
-            ByteArrayDataInput in = ByteStreams.newDataInput(event.getData());
-            boolean code = in.readBoolean();
-            getServer(backend.getServer().getServerInfo().getName()).ifPresentOrElse(server -> {
-                logger.info("got server");
-                if (code) { server.feed(); } else { logger.info("n"); }
-            }, () -> {
-                logger.warn("Received signal from a server on the proxy, but it cannot be correlated to a server in the config?");
-            });
-        }
-    }
-
-    public enum ConfirmMode {
-        NEVER("never"),  // never send confirm
-        MASS("mass"), // send user confirm to SENDER if they use /dptsend all/here <server>
-        PERSONAL("personal"), // send user confirm if they use /dptsend <server>
-        ALWAYS("always") // always send user confirm to individuals
-        ;
-
-        private final String modeString;
-        private ConfirmMode(String modeString) {
-            this.modeString = modeString;
-        }
-
-        @Override
-        public String toString() {
-            return modeString;
-        }
-
-        public static ConfirmMode fromString(String mode) {
-            return switch (mode.toLowerCase()) {
-                case "never"    -> NEVER;
-                case "mass"     -> MASS;
-                case "personal" -> PERSONAL;
-                case "always"   -> ALWAYS;
-                default        -> NEVER;
-            };
-        }
+    private void discoverServers() {
+        rootNode.node("servers").childrenMap().forEach((keyStr, node) -> {
+            String key = (String) keyStr;
+            getProxy().getServer(key).ifPresentOrElse(server -> {
+                String identifier = node.node("identifier").getString();
+                int timeout = node.node("timeout").getInt(defaultWatchdogTimeout);
+                servers.put(key, new Server(this, server, panelClient, identifier, timeout));
+            }, () -> logger.warn("Server '" + key + "' doesn't seem to be a server listed in velocity :<"));
+        });
     }
 }

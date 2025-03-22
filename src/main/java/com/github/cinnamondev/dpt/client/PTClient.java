@@ -1,6 +1,8 @@
 package com.github.cinnamondev.dpt.client;
 
-import org.slf4j.Logger;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -10,104 +12,94 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class PTClient {
-    private final String apiKey;
     private final HttpClient client = HttpClient.newHttpClient();
-    private final String baseURI;
+    private final HttpRequest.Builder requestBuilder;
 
-    private final HttpRequest.Builder baseRequest;
-    private final Logger logger;
+    private final URI baseUri;
+    private final String apiKey;
 
-    public PTClient(String apiKey, String baseURI, Logger logger) {
-        this.logger = logger;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    public PTClient(URI baseUri, String apiKey) {
+        this.baseUri = baseUri;
         this.apiKey = apiKey;
-        this.baseURI = baseURI;
-        this.baseRequest = HttpRequest.newBuilder()
+        this.requestBuilder = HttpRequest.newBuilder()
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + apiKey);
     }
 
-    public Logger getLogger() {
-        return logger;
-    }
-    private static String uuidToIdentifier(String uuid) {
-        return uuid.substring(0, 8);
-    }
-    private Optional<HttpResponse<String>> post(String endpoint, String payload) {
-        String resource = baseURI + endpoint;
 
-        HttpRequest req = baseRequest
-                .uri(URI.create(resource))
-                .POST(HttpRequest.BodyPublishers.ofString(payload))
-                .build();
 
+    private URI powerEndpoint(String identifier) {
+        return baseUri.resolve("/api/client/servers/" + identifier.substring(0,8) + "/power");
+    }
+    public HttpResponse<Void> postPower(String identifier, PowerAction action) throws IOException, InterruptedException {
+        return client.send(
+                requestBuilder.uri(powerEndpoint(identifier))
+                        .POST(HttpRequest.BodyPublishers.ofString("{\"signal\":\"" + action + "\"}"))
+                        .build(), HttpResponse.BodyHandlers.discarding()
+        );
+    }
+
+    public boolean power(String identifier, PowerAction action) {
         try {
-            return Optional.of(client.send(req, HttpResponse.BodyHandlers.ofString()));
+            return postPower(identifier, action).statusCode() == 204;
         } catch (Exception e) {
-            logger.error(e.getMessage());
+            return false;
         }
-        return Optional.empty();
     }
-    private Optional<HttpResponse<Void>> postDiscarding(String endpoint, String payload) {
-        String resource = baseURI + endpoint;
-
-        HttpRequest req = baseRequest
-                .uri(URI.create(resource))
-                .POST(HttpRequest.BodyPublishers.ofString(payload))
-                .build();
-
+    private URI consoleEndpoint(String identifier) {
+        return baseUri.resolve("/api/client/servers/" + identifier.substring(0,8) + "/websocket");
+    }
+    private URI resourceEndpoint(String identifier) {
+        return baseUri.resolve("/api/client/servers/" + identifier.substring(0,8) + "/resources");
+    }
+    public Optional<Resources> resources(String identifier) {
         try {
-            return Optional.of(client.send(req, HttpResponse.BodyHandlers.discarding()));
+            var resp = client.send(
+                    requestBuilder.uri(resourceEndpoint(identifier))
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString()
+            );
+            if (resp.statusCode() != 200) { return Optional.empty(); }
+            return Optional.of(objectMapper.reader()
+                    .withRootName("attributes")
+                    .forType(Resources.class)
+                    .readValue(resp.body())
+            );
         } catch (Exception e) {
-            logger.error(e.getMessage());
+            return Optional.empty();
         }
-        return Optional.empty();
     }
-
-    private Optional<HttpResponse<String>> get(String endpoint) {
-        String resource = baseURI + endpoint;
-
-        HttpRequest req = baseRequest
-                .uri(URI.create(resource))
-                .GET()
-                .build();
-
+    private URI commandEndpoint(String identifier) {
+        return baseUri.resolve("/api/client/servers/" + identifier.substring(0,8) + "/command");
+    }
+    private URI detailEndpoint(String identifier) {
+        return baseUri.resolve("/api/client/servers/" + identifier.substring(0,8));
+    }
+    public PowerState power(String identifier) {
         try {
-            return Optional.of(client.send(req, HttpResponse.BodyHandlers.ofString()));
+            var resp = client.send(
+                    requestBuilder.uri(resourceEndpoint(identifier))
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString()
+            );
+            if (resp.statusCode() != 200) { return PowerState.OFFLINE; }
+            String body = resp.body();
+            if (!body.contains("\"current_state\"")) { return PowerState.OFFLINE; }
+            Pattern r = Pattern.compile("\"current_state\": *\"([a-zA-Z]+)\"");
+            Matcher m = r.matcher(body);
+            if (m.find()) {
+                String stateString = m.group(1);
+                return PowerState.fromString(stateString);
+            } else {
+                return PowerState.OFFLINE;
+
+            }
         } catch (Exception e) {
-            logger.error(e.getMessage());
+            return PowerState.OFFLINE;
         }
-        return Optional.empty();
     }
-    public Optional<String> resources(String identifier) {
-        Optional<HttpResponse<String>> response = get("/api/client/servers/" + identifier + "/resources");
-
-        return response.map(HttpResponse::body);
-    }
-    public PowerState state(String identifier) {
-        Optional<String> resources = resources(identifier);
-        PowerState state = resources.filter(json -> {return json.contains("\"current_state\"");})
-                .map(json -> {
-                   Pattern r = Pattern.compile("\"current_state\": *\"([a-zA-Z]+)\"");
-                   Matcher m = r.matcher(json);
-                   if (m.find()) {
-                       String stateString = m.group(1);
-                       return PowerState.fromString(stateString);
-                   } else {
-                       logger.error("couldnt get power state for " + identifier);
-                       logger.info(json);
-                   }
-                   return PowerState.OFFLINE;
-                })
-                .orElse(PowerState.OFFLINE);
-        logger.info("PowerState {} is {}", identifier, state);
-        return state;
-    }
-    public int power(String identifier, PowerAction power) {
-        String payload = "{\"signal\": \"" + power.toString() + "\"}";
-        Optional<HttpResponse<Void>> response = postDiscarding("/api/client/servers/" + identifier + "/power", payload);
-
-        return response.map(HttpResponse::statusCode).orElse(0);
-    }
-
 }
