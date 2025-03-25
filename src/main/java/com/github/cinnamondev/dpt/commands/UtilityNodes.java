@@ -61,6 +61,7 @@ public class UtilityNodes {
                             ? ctx.getArgument(argumentName, String.class) : "";
 
                     dpt.getDptServers().keySet().stream()
+                            .filter(name -> ctx.getSource().hasPermission("dpt.send.anywhere") || ctx.getSource().hasPermission("dpt.send." + name))
                             .filter(name -> name.regionMatches(true, 0, arg, 0, arg.length()))
                             .forEach(builder::suggest);
 
