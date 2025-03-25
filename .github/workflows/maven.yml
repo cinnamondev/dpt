@@ -17,8 +17,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      
     steps:
     - uses: actions/checkout@v4
     - name: Set up JDK 17
