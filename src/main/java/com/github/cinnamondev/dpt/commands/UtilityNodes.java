@@ -1,5 +1,6 @@
 package com.github.cinnamondev.dpt.commands;
 
+import com.github.cinnamondev.dpt.Dpt;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
@@ -45,6 +46,21 @@ public class UtilityNodes {
 
                     proxy.getAllServers().stream()
                             .map(server -> server.getServerInfo().getName())
+                            .filter(name -> name.regionMatches(true, 0, arg, 0, arg.length()))
+                            .forEach(builder::suggest);
+
+                    return builder.buildFuture();
+                })
+                .executes(fallback);
+    }
+    public static RequiredArgumentBuilder<CommandSource, String> dptServerNode(String argumentName, Dpt dpt, Command<CommandSource> fallback) {
+        return BrigadierCommand
+                .requiredArgumentBuilder(argumentName, StringArgumentType.word())
+                .suggests((ctx, builder) -> {
+                    String arg = ctx.getArguments().containsKey(argumentName)
+                            ? ctx.getArgument(argumentName, String.class) : "";
+
+                    dpt.getDptServers().keySet().stream()
                             .filter(name -> name.regionMatches(true, 0, arg, 0, arg.length()))
                             .forEach(builder::suggest);
 

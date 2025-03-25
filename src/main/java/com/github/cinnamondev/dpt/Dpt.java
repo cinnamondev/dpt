@@ -22,8 +22,10 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -31,7 +33,7 @@ import java.util.concurrent.ScheduledExecutorService;
 @Plugin(id = "dpt",
         name = "dpt",
         description = "dynamically start servers via pterodactyl api",
-        version = "1.2b")
+        version = "2.0")
 public class Dpt {
     private ConfigurationNode rootNode;
 
@@ -63,6 +65,10 @@ public class Dpt {
         return Optional.ofNullable(servers.get(registeredName));
     }
 
+    public Map<String,Server> getDptServers() {
+        return servers;
+    }
+
 
     @Inject
     public Dpt(Logger logger, ProxyServer proxy, @DataDirectory Path dataDirectory) {
@@ -77,10 +83,8 @@ public class Dpt {
         if (!configFile.exists()) {
             configFile.getParentFile().mkdirs();
             try (InputStream in = this.getClass().getClassLoader().getResourceAsStream("config.yaml")) {
-                configFile.createNewFile();
-                if (in != null) {
-                    try (FileOutputStream out = new FileOutputStream(configFile)) { out.write(in.readAllBytes()); }
-                }
+                if (in == null) { throw new Exception("Could not find config.yaml resource :("); }
+                Files.copy(in, configFile.toPath());
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -88,17 +92,17 @@ public class Dpt {
 
         // CONFIGURATION BRINGUP
         YamlConfigurationLoader loader = YamlConfigurationLoader.builder()
-                .path(dataDirectory.resolve("config.yaml"))
+                .file(configFile)
                 .build();
         rootNode = loader.load();
 
-        String apiString = rootNode.node("apiKey").getString(null);
-        String urlString = rootNode.node("panelUrl").getString(null);
+        String apiString = rootNode.node("api-key").getString();
+        String urlString = rootNode.node("api-url").getString();
         if (apiString == null || urlString == null) { throw new RuntimeException("apiKey and url are missing"); }
         panelClient = new PTClient(logger, URI.create(urlString), apiString);
 
-        defaultWatchdogTimeout = rootNode.node("defaultTimeout").getInt(120);
-        startupTimeout = rootNode.node("startupTimeout").getInt(120);
+        defaultWatchdogTimeout = rootNode.node("default-timeout").getInt(120);
+        startupTimeout = rootNode.node("startup-timeout").getInt(120);
 
         proxy.getChannelRegistrar().register(IDENTIFIER);
         discoverServers();
@@ -121,23 +125,24 @@ public class Dpt {
                 .aliases("dp", "ping")
                 .plugin(this)
                 .build();
-        commandManager.register(metaServer, PingCommand.command(this));
+        commandManager.register(metaPing, PingCommand.command(this));
 
         CommandMeta metaWatchdog = commandManager.metaBuilder("dptwd")
                 .aliases("dwd", "watchdog")
                 .plugin(this)
                 .build();
-        commandManager.register(metaServer, WatchdogCommand.command(this));
+        commandManager.register(metaWatchdog, WatchdogCommand.command(this));
     }
 
     private void discoverServers() {
         rootNode.node("servers").childrenMap().forEach((keyStr, node) -> {
             String key = (String) keyStr;
             getProxy().getServer(key).ifPresentOrElse(server -> {
-                String identifier = node.node("identifier").getString();
+                String identifier = node.node("uuid").getString();
                 int timeout = node.node("timeout").getInt(defaultWatchdogTimeout);
-                servers.put(key, new Server(this, server, panelClient, identifier, timeout));
-            }, () -> logger.warn("Server '" + key + "' doesn't seem to be a server listed in velocity :<"));
+                boolean watchdogEnabled = node.node("watchdog").getBoolean(false);
+                servers.put(key, new Server(this, server, panelClient, identifier, timeout, watchdogEnabled));
+            }, () -> logger.warn("Server '" + key + "' doesn't seem to be a registered server. Ignoring!"));
         });
     }
 }

@@ -9,7 +9,9 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerPing;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.Style;
 import net.kyori.adventure.text.format.TextDecoration;
+import org.checkerframework.checker.units.qual.C;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
@@ -26,11 +28,12 @@ public class Server implements PteroServer {
     private final String uuid;
     private final PTClient client;
 
-    public Server(Dpt p, RegisteredServer server, PTClient ptClient, String uuid, int timeout) {
+    public Server(Dpt p, RegisteredServer server, PTClient ptClient, String uuid, int timeout, boolean isWatchdogEnabled) {
         this.p = p;
         this.server = server;
         this.client = ptClient;
         this.uuid = uuid;
+        this.isWatchdogEnabled = isWatchdogEnabled;
 
         // schedule watchdog task
         p.getProxy().getScheduler().buildTask(p, this::watchdog)
@@ -72,7 +75,17 @@ public class Server implements PteroServer {
     }
 
     public CompletableFuture<Component> getPingAsComponent() {
-        return getRegistered().ping().thenApply(this::pingComponent);
+        return getRegistered().ping().handle((ping, ex) -> {
+            String serverName = getRegistered().getServerInfo().getName();
+            if (ex != null) {
+                p.getLogger().error("Failed to ping " + serverName, ex);
+                return Component.text("[" + serverName + "(unreachable) ]")
+                        .style(Style.style(NamedTextColor.RED, TextDecoration.BOLD))
+                        .hoverEvent(Component.text("Unavailable (can't reach)"));
+            }
+
+            return pingComponent(ping);
+        });
     }
 
     private Component resourcesComponent(Resources resources) {
@@ -89,7 +102,17 @@ public class Server implements PteroServer {
     }
 
     public CompletableFuture<Component> getResourcesAsComponent() {
-        return client.resources(uuid).thenApply(this::resourcesComponent);
+        return client.resources(uuid)
+                .handle((resource, ex) -> {
+                    if (ex != null) {
+                        p.getLogger().error("Failed to get resources for " + uuid + " (" + getRegistered().getServerInfo().getName() + ")", ex);
+                        return Component.text("[" + uuid.substring(0,8) + " (unreachable) ]")
+                                .style(Style.style(NamedTextColor.RED, TextDecoration.BOLD))
+                                .hoverEvent(Component.text("Unavailable (can't reach)"));
+                    }
+
+                    return resourcesComponent(resource);
+                });
     }
     @Override
     public void power(PowerAction action) { client.power(uuid, action); }
@@ -100,10 +123,13 @@ public class Server implements PteroServer {
         CompletableFuture<Void> future = new CompletableFuture<>();
         power(PowerAction.START);
 
-        var taskFuture = p.getExecutor().schedule(() -> {
+        var taskFuture = p.getExecutor().scheduleAtFixedRate(() -> {
             if (counter.getAndAdd(interval) > timeout) { future.completeExceptionally(new TimeoutException("server startup wait timeout")); };
-            if (power() == PowerState.RUNNING) { future.complete(null); }
-        }, interval, unit);
+            if (power() == PowerState.RUNNING) {
+                p.getLogger().info("Server running!");
+                future.complete(null);
+            }
+        }, interval, interval, unit);
         future.whenComplete((result, throwable) -> taskFuture.cancel(true));
         return future;
     }

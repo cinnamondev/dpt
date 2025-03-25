@@ -11,7 +11,7 @@ public class WatchdogCommand {
     public static BrigadierCommand command(Dpt dpt) {
         LiteralCommandNode<CommandSource> node = BrigadierCommand.literalArgumentBuilder("dptwd")
                 .requires(src -> src.hasPermission("dpt.watchdog"))
-                .then(UtilityNodes.serverNode("server", dpt.getProxy(), WatchdogCommand::usage)
+                .then(UtilityNodes.dptServerNode("server", dpt, WatchdogCommand::usage)
                         .then(BrigadierCommand.literalArgumentBuilder("start").executes(ctx -> {
                             dpt.getServer(ctx.getArgument("server", String.class)).ifPresentOrElse(server -> {
                                 server.watchdogEnabled(true);

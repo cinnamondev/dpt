@@ -1,9 +1,0 @@
-api-url: "https://panel.example.com"
-api-key: "apiKeyHere"
-default-timeout: 120
-
-servers:
-  survival-example:
-    uuid: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-    timeout: 120
-    

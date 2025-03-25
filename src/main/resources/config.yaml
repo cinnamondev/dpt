@@ -1,0 +1,11 @@
+api-url: "https://panel.example.com"
+api-key: "apiKeyHere"
+default-timeout: 120 # interval between times server's watchdog will check if its empty & online.
+startup-timeout: 120 # how long the plugin is willing to wait for a server to start before failing a request.
+
+servers:
+  survival-example: # this must match the `servers` section of `velocity.toml`
+    uuid: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    watchdog: true # set to false or omit to disable watchdog entirely.
+    timeout: 120 # omit to use `default-timeout`
+

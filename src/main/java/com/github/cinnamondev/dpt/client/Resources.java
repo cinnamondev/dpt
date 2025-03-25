@@ -17,7 +17,7 @@ public class Resources {
     @JsonProperty("resources")
     private void flattenResources(Map<String, String> resources) {
         memory = Integer.parseInt(resources.get("memory_bytes"));
-        cpu = Integer.parseInt(resources.get("cpu_absolute"));
+        cpu = Float.parseFloat(resources.get("cpu_absolute"));
         disk = Integer.parseInt(resources.get("disk_bytes"));
         networkRx = Integer.parseInt(resources.get("network_rx_bytes"));
         networkTx = Integer.parseInt(resources.get("network_tx_bytes"));
@@ -25,8 +25,8 @@ public class Resources {
     }
     private int memory;
     public int memory() { return memory; }
-    private int cpu;
-    public int cpu() { return cpu; }
+    private float cpu;
+    public float cpu() { return cpu; }
     private int disk;
     public int disk() { return disk; }
     private int networkRx;

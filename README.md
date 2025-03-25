@@ -1,36 +1,42 @@
-# Dynamic PterodacTyl
+# **D**ynamic **P**terodac**T**yl
 
-* Work in progress, but most of the things are there.
+Velocity plugin that is able to start pterodactyl containers on demand and send players to the respective server, and
+shut down servers that have neen inactive for too long.
 
-Simple Velocity plugin to start servers as they are required!
+## Commands
 
-How many use cases require such a solution when you can just keep running a server? Not many! But this is *probably useful to someone*
-
-If a server isn't on, `/dptsend` will start the server before sending the player(s)! (TODO: after some time of server inactivity the server should signal to be stopped(?))
-
-Commands:
-
-(not implemented)
-
-`/dptsend <player/all/here> <server>`
+### `/dptsend <player/all/current> <server> <promptPlayersToJoin/promptMeToSend>`
   - player: send player to server
   - all: send all players on the proxy to server
-  - here: CALLER MUST BE A PLAYER. send all players on current server to server.
+  - current: CALLER MUST BE A PLAYER. send all players on current server to server.
+  - promptPlayersToJoin: send a message to all players when the server is ready inviting them to the server.
+  - promptMeToSend: send an interactive message when the server is ready that sends all the players on click.
 
-Permissions:
-- `dpt.send`
-- `dpt.send.others` (send others)
-- `dpt.send.all` (access to all servers LISTED IN THE __PLUGIN__ CONFIGURATION)
- -`dpt.send.<server-name>` (access to a specific server LISTED IN THE __PLUGIN__ CONFIGURATION) 
+### `/dptsend server <origin server> <destination server> <promptPlayersToJoin/promptMeToSend>`
+  - origin server: any velocity server.
+  - destination server: any velocity server dpt is configured to control.
+  - promptPlayersToJoin: send a message to all players when the server is ready inviting them to the server.
+  - promptMeToSend: send an interactive message when the server is ready that sends all the players on click.
 
- `all` and `<server-name>` would not apply to a regular `/send` or `/server` command and only refer to the capability to
- run the dptsend command targeting a server that is already specifed in the plugins config.
+### `/dptserver <destination server> <immediate>`
+  - destination server: any velocity server dpt is configured to control
+  - immediate: `dptserver` default behaviour should be to prompt when the server is ready. specifying this option will send the player as soon as the servers ready.
 
-`/dptserver <server>`
-Send player to server
+### `/dptping <server>`
+  - server: any velocity server dpt is configured to control
 
-Permissions:
-- `dpt.send`
+### `/dptwd <server> <start/stop>`
+  - server: any velocity server dpt is configured to control
+
+## Permissions:
+
+- `dpt.send` Access to `/dptserver <destination server>`. Give this permission to users ideally (plus specific server permissions)
+- `dpt.send.others` Send other players on proxy/server (`/dptsend <player> <destination>`)
+- `dpt.send.all` Send all players on proxy/server (`/dptsend <all/current> <destination>`)
+- `dpt.send.<server-name>` Access to do `/dptserver <server-name>` and `/dptsend <player/all/current> <server-name>` where `server-name` is already configured.
+- `dpt.send.anywhere` Above permission but for any server.
+- `dpt.ping` Ping a server.
+- `dpt.watchdog` Access to `/dptwd`
 
 # License
 

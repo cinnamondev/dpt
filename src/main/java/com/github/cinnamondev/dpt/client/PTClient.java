@@ -1,15 +1,12 @@
 package com.github.cinnamondev.dpt.client;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -74,10 +71,11 @@ public class PTClient {
                 throw new RuntimeException("Unexpected response code: " + r.statusCode());
             }
             try {
-                return objectMapper.reader().withRootName("attributes")
-                        .forType(Resources.class)
-                        .readValue(r.body());
-            } catch (JsonProcessingException e) {
+                return ((PTObject) objectMapper.reader()
+                        .forType(PTObject.class)
+                        .readValue(r.body())).attributes;
+            } catch (Exception e) {
+                logger.info(r.body());
                 throw new RuntimeException(e);
             }
         });
