@@ -1,39 +1,32 @@
 package com.github.cinnamondev.dpt;
 
 import com.github.cinnamondev.dpt.client.PTClient;
-import com.github.cinnamondev.dpt.client.PowerAction;
+import com.github.cinnamondev.dpt.commands.PingCommand;
 import com.github.cinnamondev.dpt.commands.SendCommand;
-import com.google.common.io.ByteArrayDataInput;
-import com.google.common.io.ByteStreams;
+import com.github.cinnamondev.dpt.commands.WatchdogCommand;
 import com.google.inject.Inject;
 import com.velocitypowered.api.command.CommandManager;
 import com.velocitypowered.api.command.CommandMeta;
-import com.velocitypowered.api.event.connection.PluginMessageEvent;
-import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.Subscribe;
+import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
-import com.velocitypowered.api.proxy.ServerConnection;
 import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
-import com.velocitypowered.api.proxy.server.RegisteredServer;
 import org.slf4j.Logger;
 import org.spongepowered.configurate.ConfigurateException;
 import org.spongepowered.configurate.ConfigurationNode;
-import org.spongepowered.configurate.ConfigurationOptions;
 import org.spongepowered.configurate.yaml.YamlConfigurationLoader;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.HashMap;
-import java.util.Map;
 import java.util.Optional;
-import java.util.ResourceBundle;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.function.BiConsumer;
 
 @Plugin(id = "dpt",
         name = "dpt",
@@ -102,10 +95,13 @@ public class Dpt {
         String apiString = rootNode.node("apiKey").getString(null);
         String urlString = rootNode.node("panelUrl").getString(null);
         if (apiString == null || urlString == null) { throw new RuntimeException("apiKey and url are missing"); }
-        panelClient = new PTClient(URI.create(urlString), apiString);
+        panelClient = new PTClient(logger, URI.create(urlString), apiString);
 
         defaultWatchdogTimeout = rootNode.node("defaultTimeout").getInt(120);
         startupTimeout = rootNode.node("startupTimeout").getInt(120);
+
+        proxy.getChannelRegistrar().register(IDENTIFIER);
+        discoverServers();
 
         CommandManager commandManager = proxy.getCommandManager();
 
@@ -120,8 +116,18 @@ public class Dpt {
                 .plugin(this)
                 .build();
         commandManager.register(metaServer, SendCommand.serverCommand(this));
-        
-        proxy.getChannelRegistrar().register(IDENTIFIER);
+
+        CommandMeta metaPing = commandManager.metaBuilder("dptping")
+                .aliases("dp", "ping")
+                .plugin(this)
+                .build();
+        commandManager.register(metaServer, PingCommand.command(this));
+
+        CommandMeta metaWatchdog = commandManager.metaBuilder("dptwd")
+                .aliases("dwd", "watchdog")
+                .plugin(this)
+                .build();
+        commandManager.register(metaServer, WatchdogCommand.command(this));
     }
 
     private void discoverServers() {

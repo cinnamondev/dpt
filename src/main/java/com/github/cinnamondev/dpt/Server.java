@@ -1,15 +1,15 @@
 package com.github.cinnamondev.dpt;
 
-import com.github.cinnamondev.dpt.client.PTClient;
-import com.github.cinnamondev.dpt.client.PowerAction;
-import com.github.cinnamondev.dpt.client.PowerState;
-import com.github.cinnamondev.dpt.client.PteroServer;
+import com.github.cinnamondev.dpt.client.*;
+import com.github.cinnamondev.dpt.commands.UtilityNodes;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.PingOptions;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerPing;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.format.TextDecoration;
 
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
@@ -71,6 +71,26 @@ public class Server implements PteroServer {
                 );
     }
 
+    public CompletableFuture<Component> getPingAsComponent() {
+        return getRegistered().ping().thenApply(this::pingComponent);
+    }
+
+    private Component resourcesComponent(Resources resources) {
+        Component lore = Component.text("Basic Info").appendNewline()
+                .append(Component.text("CPU: " + resources.cpu())).appendNewline()
+                .append(Component.text("Memory: " + UtilityNodes.bytesToReadableBytes(resources.memory()))).appendNewline()
+                .append(Component.text("Disk: " + UtilityNodes.bytesToReadableBytes(resources.disk()))).appendNewline()
+                .append(Component.text("Suspended: "))
+                .append(resources.isSuspended() ? Component.text("Yes", NamedTextColor.RED) : Component.text("No", NamedTextColor.GREEN)).appendNewline()
+                .append(Component.text("Tx/Rx : " + UtilityNodes.bytesToReadableBytes(resources.networkTx()) + " / "))
+                .append(Component.text("Tx: " + UtilityNodes.bytesToReadableBytes(resources.networkTx())));
+        return Component.text("[" + uuid.substring(0,8) + "]")
+                .hoverEvent(lore);
+    }
+
+    public CompletableFuture<Component> getResourcesAsComponent() {
+        return client.resources(uuid).thenApply(this::resourcesComponent);
+    }
     @Override
     public void power(PowerAction action) { client.power(uuid, action); }
 

@@ -8,6 +8,9 @@ import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 
+import java.text.CharacterIterator;
+import java.text.StringCharacterIterator;
+
 
 public class UtilityNodes {
     public static RequiredArgumentBuilder<CommandSource, String> playerNode(String argumentName, ProxyServer proxy, Command<CommandSource> fallback) {
@@ -48,5 +51,19 @@ public class UtilityNodes {
                     return builder.buildFuture();
                 })
                 .executes(fallback);
+    }
+
+    public static String bytesToReadableBytes(long bytes) {
+        // from: https://stackoverflow.com/questions/3758606/how-can-i-convert-byte-size-into-a-human-readable-format-in-java
+        long absB = bytes == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(bytes);
+        if (absB < 1024) { return bytes + " B"; }
+        long value = absB;
+        CharacterIterator ci = new StringCharacterIterator("KMGTPE");
+        for (int i = 40; i >= 0 && absB > 0xfffccccccccccccL >> i; i -= 10) {
+            value >>= 10;
+            ci.next();
+        }
+        value *= Long.signum(bytes);
+        return String.format("%.1f %ciB", value / 1024.0, ci.current());
     }
 }

@@ -8,10 +8,7 @@ import com.velocitypowered.api.command.CommandSource;
 import net.kyori.adventure.text.Component;
 
 public class WatchdogCommand {
-    private static void CommandHelp(CommandSource source) {
-        source.sendMessage(Component.text("/dptwd <server> [start/stop]"));
-    }
-    public static BrigadierCommand brigadierCommand(Dpt dpt) {
+    public static BrigadierCommand command(Dpt dpt) {
         LiteralCommandNode<CommandSource> node = BrigadierCommand.literalArgumentBuilder("dptwd")
                 .requires(src -> src.hasPermission("dpt.watchdog"))
                 .then(UtilityNodes.serverNode("server", dpt.getProxy(), WatchdogCommand::usage)
@@ -43,6 +40,7 @@ public class WatchdogCommand {
     }
 
     private static int usage(CommandContext<CommandSource> ctx) {
+        ctx.getSource().sendMessage(Component.text("/dptwd <server> [start/stop]"));
         return 1;
     }
 }

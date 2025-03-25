@@ -23,7 +23,6 @@ public class SendCommand {
      * @return BrigadierCommand
      */
     public static BrigadierCommand sendCommand(Dpt dpt) {
-
         LiteralCommandNode<CommandSource> node = BrigadierCommand.literalArgumentBuilder("dptsend")
                 .requires(src -> src.hasPermission("dpt.send.others"))
                 .executes(SendCommand::usage)
