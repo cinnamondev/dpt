@@ -66,7 +66,8 @@ public class Server implements PteroServer {
                 .map(players -> Component.text(players.getOnline() + "/" + players.getMax() + " online"))
                 .orElse(Component.text("(Player count hidden)"));
 
-        return Component.text(server.getServerInfo().getName())
+        return Component.text("[" + server.getServerInfo().getName() + "]")
+                .style(Style.style(NamedTextColor.GREEN, TextDecoration.BOLD))
                 .hoverEvent(
                         ping.getDescriptionComponent().appendNewline()
                                 .append(Component.text("Identifier: " + uuid.substring(0,8))).appendNewline()
@@ -79,7 +80,7 @@ public class Server implements PteroServer {
             String serverName = getRegistered().getServerInfo().getName();
             if (ex != null) {
                 p.getLogger().error("Failed to ping " + serverName, ex);
-                return Component.text("[" + serverName + "(unreachable) ]")
+                return Component.text("[" + serverName + " (unreachable) ]")
                         .style(Style.style(NamedTextColor.RED, TextDecoration.BOLD))
                         .hoverEvent(Component.text("Unavailable (can't reach)"));
             }
@@ -98,6 +99,7 @@ public class Server implements PteroServer {
                 .append(Component.text("Tx/Rx : " + UtilityNodes.bytesToReadableBytes(resources.networkTx()) + " / "))
                 .append(Component.text("Tx: " + UtilityNodes.bytesToReadableBytes(resources.networkTx())));
         return Component.text("[" + uuid.substring(0,8) + "]")
+                .style(Style.style(NamedTextColor.GREEN, TextDecoration.BOLD))
                 .hoverEvent(lore);
     }
 

@@ -16,23 +16,23 @@ public class Resources {
 
     @JsonProperty("resources")
     private void flattenResources(Map<String, String> resources) {
-        memory = Integer.parseInt(resources.get("memory_bytes"));
+        memory = Long.parseLong(resources.get("memory_bytes"));
         cpu = Float.parseFloat(resources.get("cpu_absolute"));
-        disk = Integer.parseInt(resources.get("disk_bytes"));
-        networkRx = Integer.parseInt(resources.get("network_rx_bytes"));
-        networkTx = Integer.parseInt(resources.get("network_tx_bytes"));
+        disk = Long.parseLong(resources.get("disk_bytes"));
+        networkRx = Long.parseLong(resources.get("network_rx_bytes"));
+        networkTx = Long.parseLong(resources.get("network_tx_bytes"));
 
     }
-    private int memory;
-    public int memory() { return memory; }
+    private long memory;
+    public long memory() { return memory; }
     private float cpu;
     public float cpu() { return cpu; }
-    private int disk;
-    public int disk() { return disk; }
-    private int networkRx;
-    public int networkRx() { return networkRx; }
-    private int networkTx;
-    public int networkTx() { return networkTx; }
+    private long disk;
+    public long disk() { return disk; }
+    private long networkRx;
+    public long networkRx() { return networkRx; }
+    private long networkTx;
+    public long networkTx() { return networkTx; }
 }
 
 
